@@ -1,0 +1,658 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Infinity Interns — Prisma schema
+// PostgreSQL. Designed for horizontal scale: UUID PKs, soft enums, audit trails,
+// and clear aggregate boundaries (User / Internship / Application / Certificate).
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  STUDENT
+  ORGANIZATION
+  MENTOR
+  INSTITUTION
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum WorkMode {
+  REMOTE
+  ONSITE
+  HYBRID
+}
+
+enum InternshipStatus {
+  DRAFT
+  PENDING_APPROVAL
+  OPEN
+  CLOSED
+  ARCHIVED
+}
+
+enum ApplicationStatus {
+  APPLIED
+  ADMIN_REVIEW
+  ORG_REVIEW
+  SHORTLISTED
+  UNDER_REVIEW
+  SELECTED
+  ONGOING
+  PERFORMANCE_EVALUATION
+  COMPLETION_APPROVAL
+  COMPLETED
+  CERTIFICATE_GENERATED
+  REJECTED
+  WITHDRAWN
+}
+
+enum TaskStatus {
+  ASSIGNED
+  IN_PROGRESS
+  SUBMITTED
+  REVISION_REQUESTED
+  APPROVED
+  REJECTED
+}
+
+enum CertificateType {
+  INTERNSHIP_COMPLETION
+  TRAINING
+  WORKSHOP
+  EXCELLENCE_AWARD
+  LETTER_OF_RECOMMENDATION
+  APPRECIATION
+}
+
+enum CertificateStatus {
+  ISSUED
+  REVOKED
+}
+
+enum PerformanceGrade {
+  A_PLUS
+  A
+  B
+  C
+  PASS
+}
+
+enum DomainCategory {
+  SOFTWARE
+  DESIGN
+  AI_DATA
+  SECURITY
+  CLOUD_INFRA
+  EMERGING_TECH
+  CORE_ENGINEERING
+  BUSINESS
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+// ── Identity & profiles ──────────────────────────────────────────────────────
+
+model User {
+  id            String        @id @default(uuid())
+  email         String        @unique
+  phone         String?       @unique
+  passwordHash  String?
+  roles         UserRole[]    @default([STUDENT])
+  status        AccountStatus @default(PENDING_VERIFICATION)
+  emailVerified Boolean       @default(false)
+
+  fullName  String
+  avatarUrl String?
+
+  // OAuth identities
+  googleId   String? @unique
+  linkedinId String? @unique
+
+  // Relations to role-specific profiles
+  studentProfile      StudentProfile?
+  organizationProfile OrganizationProfile?
+  institution         Institution?
+
+  // Activity
+  refreshTokens  RefreshToken[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  mentorFeedback MentorFeedback[] @relation("MentorAuthored")
+  issuedCerts    Certificate[]    @relation("CertificateIssuer")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([status])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model StudentProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  branchId       String?
+  branch         Branch? @relation(fields: [branchId], references: [id])
+  collegeName    String?
+  graduationYear Int?
+  cgpa           Float?
+  city           String?
+  state          String?
+  bio            String?
+
+  // Portfolio links
+  resumeUrl    String?
+  portfolioUrl String?
+  linkedinUrl  String?
+  githubUrl    String?
+
+  // Derived metrics
+  profileCompletion Int @default(0) // 0-100
+  xpPoints          Int @default(0)
+  level             Int @default(1)
+
+  skills         StudentSkill[]
+  applications   Application[]
+  certificates   Certificate[]
+  badges         StudentBadge[]
+  assessments    AssessmentAttempt[]
+  resumeAnalyses ResumeAnalysis[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([branchId])
+  @@map("student_profiles")
+}
+
+model OrganizationProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  companyName String
+  website     String?
+  logoUrl     String?
+  industry    String?
+  about       String?
+  city        String?
+  state       String?
+  verified    Boolean @default(false)
+
+  internships Internship[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("organization_profiles")
+}
+
+model Institution {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name     String
+  code     String? @unique
+  city     String?
+  state    String?
+  verified Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("institutions")
+}
+
+// ── Taxonomy ─────────────────────────────────────────────────────────────────
+
+model Branch {
+  id        String @id @default(uuid())
+  slug      String @unique
+  name      String
+  shortCode String
+
+  students    StudentProfile[]
+  internships Internship[]
+
+  createdAt DateTime @default(now())
+
+  @@map("branches")
+}
+
+model Domain {
+  id       String         @id @default(uuid())
+  slug     String         @unique
+  name     String
+  category DomainCategory
+
+  internships Internship[]
+
+  createdAt DateTime @default(now())
+
+  @@map("domains")
+}
+
+model Skill {
+  id   String @id @default(uuid())
+  slug String @unique
+  name String
+
+  students    StudentSkill[]
+  internships InternshipSkill[]
+
+  @@map("skills")
+}
+
+model StudentSkill {
+  studentId   String
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skillId     String
+  skill       Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  proficiency Int            @default(1) // 1-5
+  verified    Boolean        @default(false)
+
+  @@id([studentId, skillId])
+  @@map("student_skills")
+}
+
+// ── Internships ──────────────────────────────────────────────────────────────
+
+model Internship {
+  id               String  @id @default(uuid())
+  slug             String  @unique
+  title            String
+  description      String
+  responsibilities String?
+  eligibility      String?
+
+  organizationId String
+  organization   OrganizationProfile @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+  domainId String
+  domain   Domain  @relation(fields: [domainId], references: [id])
+
+  workMode      WorkMode  @default(REMOTE)
+  location      String?
+  stipendMin    Int? // INR per month
+  stipendMax    Int?
+  durationWeeks Int       @default(8)
+  openings      Int       @default(1)
+  applyByDate   DateTime?
+  startDate     DateTime?
+
+  status       InternshipStatus @default(DRAFT)
+  approvedById String?
+  approvedAt   DateTime?
+
+  skills       InternshipSkill[]
+  applications Application[]
+  tasks        TaskTemplate[]
+
+  viewsCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, domainId])
+  @@index([branchId])
+  @@map("internships")
+}
+
+model InternshipSkill {
+  internshipId String
+  internship   Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  skillId      String
+  skill        Skill      @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  required     Boolean    @default(true)
+
+  @@id([internshipId, skillId])
+  @@map("internship_skills")
+}
+
+// Reusable task definitions an org attaches to an internship posting
+model TaskTemplate {
+  id           String     @id @default(uuid())
+  internshipId String
+  internship   Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  weekNumber   Int        @default(1)
+  maxScore     Int        @default(100)
+
+  createdAt DateTime @default(now())
+
+  @@map("task_templates")
+}
+
+// ── Applications & workspace ───────────────────────────────────────────────────
+
+model Application {
+  id           String         @id @default(uuid())
+  studentId    String
+  student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  internshipId String
+  internship   Internship     @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+
+  status       ApplicationStatus @default(APPLIED)
+  coverLetter  String?
+  resumeUrl    String?
+  portfolioUrl String?
+  linkedinUrl  String?
+  githubUrl    String?
+
+  // Lifecycle timestamps
+  appliedAt     DateTime  @default(now())
+  selectedAt    DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  rejectedAt    DateTime?
+  rejectionNote String?
+
+  // Outcome
+  finalGrade PerformanceGrade?
+  finalScore Int?
+
+  history         ApplicationStatusEvent[]
+  taskSubmissions TaskSubmission[]
+  attendance      AttendanceRecord[]
+  weeklyReports   WeeklyReport[]
+  feedback        MentorFeedback[]
+  certificate     Certificate?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, internshipId])
+  @@index([status])
+  @@map("applications")
+}
+
+model ApplicationStatusEvent {
+  id            String             @id @default(uuid())
+  applicationId String
+  application   Application        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  note          String?
+  actorId       String? // user id who triggered the transition
+  createdAt     DateTime           @default(now())
+
+  @@index([applicationId])
+  @@map("application_status_events")
+}
+
+model TaskSubmission {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  submissionUrl String?
+  weekNumber    Int         @default(1)
+  status        TaskStatus  @default(ASSIGNED)
+  score         Int?
+  reviewerNote  String?
+
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([applicationId])
+  @@map("task_submissions")
+}
+
+model AttendanceRecord {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  date          DateTime    @db.Date
+  present       Boolean     @default(true)
+  hours         Float?
+  note          String?
+
+  @@unique([applicationId, date])
+  @@map("attendance_records")
+}
+
+model WeeklyReport {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  weekNumber    Int
+  summary       String
+  hoursLogged   Float?
+  blockers      String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([applicationId, weekNumber])
+  @@map("weekly_reports")
+}
+
+model MentorFeedback {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  mentorId      String
+  mentor        User        @relation("MentorAuthored", fields: [mentorId], references: [id])
+  rating        Int // 1-5
+  comment       String?
+  weekNumber    Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([applicationId])
+  @@map("mentor_feedback")
+}
+
+// ── Certificates ───────────────────────────────────────────────────────────────
+
+model Certificate {
+  id String @id @default(uuid())
+
+  // Public, human-shareable identifier printed on the certificate + QR
+  certificateId String @unique // e.g. INF-2026-AB12CD34
+
+  type   CertificateType   @default(INTERNSHIP_COMPLETION)
+  status CertificateStatus @default(ISSUED)
+
+  studentId     String
+  student       StudentProfile @relation(fields: [studentId], references: [id])
+  applicationId String?        @unique
+  application   Application?   @relation(fields: [applicationId], references: [id])
+
+  issuedById String
+  issuedBy   User   @relation("CertificateIssuer", fields: [issuedById], references: [id])
+
+  // Snapshotted display fields (immutable record at issue time)
+  studentName      String
+  organizationName String
+  domainName       String
+  title            String
+  durationWeeks    Int?
+  startDate        DateTime?
+  endDate          DateTime?
+  grade            PerformanceGrade?
+
+  // Verification & security
+  verificationNumber String  @unique // unique anti-collision token
+  qrPayloadUrl       String
+  contentHash        String // SHA-256 of canonical fields -> anti-tamper
+  signature          String? // digital signature over contentHash
+  pdfUrl             String?
+
+  issueDate    DateTime  @default(now())
+  revokedAt    DateTime?
+  revokeReason String?
+
+  verifications CertificateVerification[]
+
+  createdAt DateTime @default(now())
+
+  @@index([studentId])
+  @@map("certificates")
+}
+
+// Append-only verification log (who scanned/checked a certificate)
+model CertificateVerification {
+  id            String      @id @default(uuid())
+  certificateId String
+  certificate   Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+  method        String // ID | QR | LINK
+  ip            String?
+  userAgent     String?
+  valid         Boolean
+  createdAt     DateTime    @default(now())
+
+  @@index([certificateId])
+  @@map("certificate_verifications")
+}
+
+// ── AI features ──────────────────────────────────────────────────────────────
+
+model ResumeAnalysis {
+  id        String         @id @default(uuid())
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  resumeUrl    String?
+  atsScore     Int // 0-100
+  skillGaps    String[] // skills missing for target domain
+  suggestions  String[] // actionable suggestions
+  targetDomain String?
+
+  createdAt DateTime @default(now())
+
+  @@index([studentId])
+  @@map("resume_analyses")
+}
+
+model Assessment {
+  id          String  @id @default(uuid())
+  slug        String  @unique
+  title       String
+  description String?
+  domainSlug  String?
+  durationMin Int     @default(30)
+  totalScore  Int     @default(100)
+
+  attempts AssessmentAttempt[]
+
+  createdAt DateTime @default(now())
+
+  @@map("assessments")
+}
+
+model AssessmentAttempt {
+  id           String         @id @default(uuid())
+  assessmentId String
+  assessment   Assessment     @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  score        Int
+  passed       Boolean        @default(false)
+  startedAt    DateTime       @default(now())
+  finishedAt   DateTime?
+
+  @@index([studentId])
+  @@map("assessment_attempts")
+}
+
+// ── Gamification ───────────────────────────────────────────────────────────────
+
+model Badge {
+  id          String  @id @default(uuid())
+  slug        String  @unique
+  name        String
+  description String?
+  iconUrl     String?
+  xpReward    Int     @default(0)
+
+  students StudentBadge[]
+
+  @@map("badges")
+}
+
+model StudentBadge {
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  badgeId   String
+  badge     Badge          @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  awardedAt DateTime       @default(now())
+
+  @@id([studentId, badgeId])
+  @@map("student_badges")
+}
+
+// ── Platform infra ─────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   NotificationChannel @default(IN_APP)
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String // e.g. "internship.approve"
+  entity    String // e.g. "Internship"
+  entityId  String?
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}

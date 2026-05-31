@@ -1,0 +1,29 @@
+{
+  "name": "infinity-interns",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Infinity Interns - India's most comprehensive engineering internship platform",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=8"
+  },
+  "packageManager": "pnpm@9.1.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "build": "pnpm --filter \"./apps/*\" build",
+    "lint": "pnpm --recursive lint",
+    "typecheck": "pnpm --recursive typecheck",
+    "api:dev": "pnpm --filter @infinity/api start:dev",
+    "api:prisma:generate": "pnpm --filter @infinity/api prisma:generate",
+    "api:prisma:migrate": "pnpm --filter @infinity/api prisma:migrate",
+    "api:seed": "pnpm --filter @infinity/api seed",
+    "web:dev": "pnpm --filter @infinity/web dev",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  }
+}
